@@ -1,0 +1,93 @@
+---
+
+- name: NGINX | Installing dependencies
+  apt:
+    pkg: "{{ nginx_required_libs }}"
+    state: present
+    cache_valid_time: 3600
+
+- name: NGINX | Check nginx version
+  command: nginx -v
+  register: nginx_check
+  changed_when: false
+  ignore_errors: true
+
+- name: NGINX | Download external modules
+  get_url:
+    url: "{{ item.url }}"
+    dest: "{{ nginx_download_dir }}"
+    timeout: "{{ nginx_download_timeout }}"
+  loop: "{{ nginx_external_modules }}"
+  when: nginx_force_reinstall or
+    nginx_check is failed or
+    "nginx/" + nginx_version not in nginx_check.stderr
+  register: nginx_external_modules_paths
+
+- name: NGINX | Decompress external modules
+  unarchive:
+    copy: false
+    src: "{{ item.dest }}"
+    dest: "{{ nginx_src_dir }}"
+  loop: "{{ nginx_external_modules_paths.results }}"
+  when: nginx_force_reinstall or
+    nginx_check is failed or
+    "nginx/" + nginx_version not in nginx_check.stderr
+
+- name: NGINX | Untar nginx
+  unarchive:
+    copy: false
+    src: "{{ nginx_url }}"
+    dest: "{{ nginx_src_dir }}"
+  when: nginx_force_reinstall or
+        nginx_check is failed or
+        "nginx/" + nginx_version not in nginx_check.stderr
+
+- name: NGINX | Define compile-time options
+  set_fact:
+    nginx_compile_time_options_str: "{{ nginx_compile_time_options_str | default('') }} {{ '--' + item.option + '=' + item.value }}"
+  loop: "{{ nginx_compile_time_options }}"
+
+- name: NGINX | Define builtin modules options
+  set_fact:
+    nginx_builtin_modules_str: "{{ nginx_builtin_modules_str | default('') }} {{ '--with-' + item }}"
+  loop: "{{ nginx_builtin_modules }}"
+
+- name: NGINX | Define SSL builtin modules
+  set_fact:
+    nginx_builtin_modules_str: "{{ nginx_builtin_modules_str | default('') }} {{ '--with-' + item }}"
+  loop: "{{ nginx_ssl_builtin_modules }}"
+  when: nginx_ssl_enabled
+
+- name: NGINX | Define External modules options
+  set_fact:
+    nginx_external_modules_str: |
+      {{ nginx_external_modules_str | default('') }} {{ '--add-module=' + nginx_src_dir + '/' + item.name + '-' + item.version + ' ' }}
+  loop: "{{ nginx_external_modules }}"
+
+- name: NGINX | Configure install
+  command: ./configure {{ nginx_compile_time_options_str }} {{ nginx_builtin_modules_str }} {{ nginx_external_modules_str }}
+  args:
+    chdir: "{{ nginx_src_dir }}/nginx-{{ nginx_version }}"
+  environment:
+    LUAJIT_LIB: /usr/local/lib
+    LUAJIT_INC: "{{ '/usr/local/include/luajit-' + nginx_luajit_version[:3] }}"
+  when: nginx_force_reinstall or
+        nginx_check is failed or
+        "nginx/" + nginx_version not in nginx_check.stderr
+  notify: restart nginx
+
+- name: NGINX | Make install
+  make:
+    chdir: "{{ nginx_src_dir }}/nginx-{{ nginx_version }}"
+    target: install
+  when: nginx_force_reinstall or
+        nginx_check is failed or
+        "nginx/" + nginx_version not in nginx_check.stderr
+  notify: restart nginx
+
+- name: NGINX | Copy Daemon script
+  template:
+    src: nginx.service.j2
+    dest: /lib/systemd/system/nginx.service
+    mode: 0644
+  notify: restart nginx
