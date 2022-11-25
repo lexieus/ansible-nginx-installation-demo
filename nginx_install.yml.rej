@@ -1,0 +1,13 @@
+diff a/nginx_install.yml b/nginx_install.yml	(rejected hunks)
+@@ -0,0 +1,10 @@
++---
++- hosts: all
++  tasks:
++    - name: ensure nginx is at the latest version
++      apt: name=nginx state=latest
++    - name: start nginx
++      service:
++          name: nginx
++          state: started
++ 
+\ No newline at end of file
